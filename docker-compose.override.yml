@@ -1,0 +1,85 @@
+version: '3.4'
+services:
+  authentication-service:
+    build:
+      context: .
+      dockerfile: docker/authentication.service.Dockerfile
+    container_name: authentication-service
+    ports:
+      - "5001:8080"
+    env_file:
+     - ./.env
+    environment:
+      AdminCredentials__Password: CRAWLER200
+      AdminCredentials__Username: ADMIN
+      DOTNET_ENVIRONMENT: Development
+      Jwt__Audience: parser-api-service
+      Jwt__ExpiryMinutes: "60"
+      Jwt__Issuer: authentication-service
+      Jwt__SecretKey: k1VR4gn9MBTlGrP5zqErFwT7jRT6RLJpoQo9hz5Y2HI=
+      DOTNET_USE_POLLING_FILE_WATCHER: "1"
+      DOTNET_RUNNING_IN_CONTAINER: "true"
+    volumes:
+      - ./src:/src:cached
+      - ~/.vsdbg:/root/.vsdbg:rw
+    networks:
+      - crawl_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://authentication-service:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  parser-api-service:
+    build:
+      context: .
+      dockerfile: docker/parser.api.service.Dockerfile
+    container_name: parser-api-service
+    ports:
+      - "5002:8080"
+    env_file:
+     - ./.env
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      MassTransit__RabbitMq__Host: rabbitmq
+      MassTransit__RabbitMq__Username: guest
+      MassTransit__RabbitMq__Password: guest
+      MassTransit__AzureServiceBus__ConnectionString: ${ SERVICEBUS_CONNECTIONSTRING }
+      ServiceBus__QueueName: ad-queue
+      Jwt__Audience: parser-api-service
+      Jwt__ExpiryMinutes: "60"
+      Jwt__Issuer: authentication-service
+      Jwt__SecretKey: ${ JWT_SECRETKEY }
+    depends_on:
+      authentication-service:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - crawl_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://parser-api-service:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - crawl_network
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+networks:
+  crawl_network:
+    driver: bridge
